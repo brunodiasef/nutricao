@@ -26,7 +26,7 @@ b{font-weight:600;color:var(--ink)}
 
 /* ---------- estrutura ---------- */
 #deck{height:100%;position:relative}
-.slide{position:absolute;inset:0;padding:clamp(26px,4vh,52px) clamp(26px,4.2vw,68px) 92px;
+.slide{position:absolute;inset:0;padding:clamp(26px,4vh,52px) clamp(26px,4.2vw,68px) var(--barra,92px);
   display:flex;flex-direction:column;overflow:auto}
 .slide > *{flex:1;min-height:0}
 .slide .pane{animation:rise .5s cubic-bezier(.2,.7,.3,1) both}
@@ -37,7 +37,8 @@ b{font-weight:600;color:var(--ink)}
 .split{display:grid;grid-template-columns:minmax(280px,34%) 1fr;gap:clamp(20px,3vw,48px);
   flex:1;min-height:0;align-items:stretch}
 .split.wide{grid-template-columns:minmax(260px,29%) 1fr}
-.pane{min-width:0;min-height:0;display:flex;flex-direction:column;gap:14px;justify-content:center}
+.pane{min-width:0;min-height:0;display:flex;flex-direction:column;gap:14px;
+  justify-content:safe center;overflow:auto}
 
 /* ---------- barra inferior ---------- */
 #bar{position:fixed;left:0;right:0;bottom:0;height:64px;display:flex;align-items:center;
@@ -115,8 +116,11 @@ td{padding:7px 10px 7px 0;border-bottom:1px solid rgba(233,241,237,.07);
 .rule{height:1px;background:var(--line);border:0;margin:2px 0}
 .hint{color:var(--muted);font-size:.8rem}
 @media (max-width:820px){
-  .split,.split.wide{grid-template-columns:1fr}
-  .slide{padding:22px 20px 96px}
+  .split,.split.wide{grid-template-columns:1fr;align-items:start}
+  .slide > *{flex:none}
+  .pane{overflow:visible;justify-content:flex-start}
+  .card.scroll{overflow:visible;flex:none}
+  .slide{padding:22px 20px var(--barra,96px)}
   #bar{height:auto;padding:10px 20px;flex-wrap:wrap}
 }
 </style>
@@ -148,12 +152,25 @@ const CAT = {
   pendente:{n:'Ainda não medido',c:'var(--pendente)'}
 };
 const ORD = ['magreza','eutrofia','sobrepeso','obesidade','grave'];
+const CATE = {
+  adequada:{n:'Estatura adequada',c:'var(--eutrofia)'},
+  baixa:{n:'Baixa estatura',c:'var(--sobrepeso)'},
+  muito:{n:'Muito baixa estatura',c:'var(--grave)'}
+};
+const ORDE = ['adequada','baixa','muito'];
+const ESQ_IMC = {ord:ORD, dic:CAT, cat:o=>o.c};
+const ESQ_EST = {ord:ORDE, dic:CATE,
+  cat:o => o.ze===null ? null : (o.ze<-3 ? 'muito' : (o.ze<-2 ? 'baixa' : 'adequada'))};
 const medidos = A.filter(a=>a.c!=='pendente');
 const validos = A.filter(a=>ORD.includes(a.c));
 const excesso = validos.filter(a=>['sobrepeso','obesidade','grave'].includes(a.c));
 const pendentes = A.filter(a=>a.c==='pendente');
 const baixaEst = A.filter(a=>a.ze!==null && a.ze<-2).sort((x,y)=>x.ze-y.ze);
 const foraFaixa = A.filter(a=>a.p!==null && a.a>19).length;
+/* estado de interface preservado quando o slide é reconstruído */
+const ESTADOS = {};
+const estadoDe = (k,base=ORD) => ESTADOS[k] || (ESTADOS[k]={sexo:'F',cats:new Set(base),turma:'__all'});
+const feitos = new Set();
 let anon = false;
 const nome = a => anon ? ('Aluno ' + (A.indexOf(a)+1)) : a.n;
 const pct = (n,d) => (100*n/d).toFixed(1).replace('.',',')+'%';
@@ -169,6 +186,8 @@ function moveTip(ev){const r=tip.getBoundingClientRect();
   let x=ev.clientX+16,y=ev.clientY+16;
   if(x+r.width>innerWidth-10)x=ev.clientX-r.width-16;
   if(y+r.height>innerHeight-10)y=ev.clientY-r.height-16;
+  x=Math.max(10,Math.min(x,innerWidth-r.width-10));
+  y=Math.max(10,Math.min(y,innerHeight-r.height-10));
   tip.style.left=x+'px';tip.style.top=y+'px';}
 function hideTip(){tip.style.opacity=0;}
 function bindTip(node,html){
@@ -199,18 +218,23 @@ function curvaOMS(opts){
   svg.appendChild(el('text',{x:(W+ml)/2,y:H-6,class:'axis','text-anchor':'middle'})).textContent='idade (anos)';
   svg.appendChild(el('text',{x:ml-9,y:mt-4,class:'axis','text-anchor':'end'})).textContent='IMC';
 
-  const cv=CURVAS[opts.sexo];
+  const sexos=opts.sexo==='A'?['F','M']:[opts.sexo];
   const faixas=[['sd2n','var(--magreza)','−2'],['sd0','var(--eutrofia)','mediana'],
                 ['sd1','var(--sobrepeso)','+1'],['sd2','var(--obesidade)','+2'],['sd3','var(--grave)','+3']];
-  faixas.forEach(([k,cor,rot])=>{
-    const d=cv.m.map((m,i)=>`${i?'L':'M'}${px(m).toFixed(1)},${py(cv[k][i]).toFixed(1)}`).join(' ');
-    svg.appendChild(el('path',{d,fill:'none',stroke:cor,'stroke-width':1.4,'stroke-opacity':.55,
-      'stroke-dasharray':k==='sd0'?'':'5 4'}));
-    const last=cv[k].length-1;
-    svg.appendChild(el('text',{x:px(cv.m[last])+4,y:py(cv[k][last])+4,class:'axis',fill:cor})).textContent=rot;
+  sexos.forEach((sx,si)=>{
+    const cv=CURVAS[sx];
+    faixas.forEach(([k,cor,rot])=>{
+      const d=cv.m.map((m,i)=>`${i?'L':'M'}${px(m).toFixed(1)},${py(cv[k][i]).toFixed(1)}`).join(' ');
+      svg.appendChild(el('path',{d,fill:'none',stroke:cor,'stroke-width':1.4,
+        'stroke-opacity':sexos.length>1?.4:.55,'stroke-dasharray':k==='sd0'?'':'5 4'}));
+      if(si===sexos.length-1){
+        const last=cv[k].length-1;
+        svg.appendChild(el('text',{x:px(cv.m[last])+4,y:py(cv[k][last])+4,class:'axis',fill:cor})).textContent=rot;
+      }
+    });
   });
 
-  const pts=A.filter(a=>a.z!==null && a.s===opts.sexo && opts.cats.has(a.c)
+  const pts=A.filter(a=>a.z!==null && (opts.sexo==='A'||a.s===opts.sexo) && opts.cats.has(a.c)
                         && (opts.turma==='__all'||a.t===opts.turma));
   pts.forEach(a=>{
     const c=el('circle',{cx:px(a.m).toFixed(1),cy:py(Math.min(a.i,y1-.4)).toFixed(1),r:4.6,
@@ -268,41 +292,89 @@ function dispersao(opts){
   svg.appendChild(el('text',{x:(W+ml)/2,y:H-6,class:'axis','text-anchor':'middle'})).textContent='idade (anos)';
   svg.appendChild(el('text',{x:ml-9,y:mt-4,class:'axis','text-anchor':'end'})).textContent=cfg.rot;
 
-  const base=A.filter(o=>o[opts.campo]!==null&&o.s===opts.sexo&&o.a>=10&&o.a<=19);
-  const med=[];
-  for(let i=10;i<=19;i++){
-    const g=base.filter(o=>Math.abs(o.a-i)<=1).map(o=>o[opts.campo]).sort((u,v)=>u-v);
-    if(g.length>=8) med.push([i*12+6,g[Math.floor(g.length/2)]]);
-  }
-  if(med.length>1){
+  const sexos=opts.sexo==='A'?['F','M']:[opts.sexo];
+  sexos.forEach(sx=>{
+    const base=A.filter(o=>o[opts.campo]!==null&&o.s===sx&&o.a>=10&&o.a<=19);
+    const med=[];
+    for(let i=10;i<=19;i++){
+      const g=base.filter(o=>Math.abs(o.a-i)<=1).map(o=>o[opts.campo]).sort((u,v)=>u-v);
+      if(g.length>=8) med.push([i*12+6,g[Math.floor(g.length/2)]]);
+    }
+    if(med.length<2) return;
     const d=med.map((q,i)=>`${i?'L':'M'}${px(q[0]).toFixed(1)},${py(q[1]).toFixed(1)}`).join(' ');
     svg.appendChild(el('path',{d,fill:'none',stroke:'var(--ink)','stroke-width':1.6,
       'stroke-opacity':.35,'stroke-dasharray':'6 4'}));
     const u=med[med.length-1];
-    svg.appendChild(el('text',{x:px(u[0])+4,y:py(u[1])+4,class:'axis'})).textContent='mediana';
-  }
+    svg.appendChild(el('text',{x:px(u[0])+4,y:py(u[1])+4,class:'axis'}))
+      .textContent=sexos.length>1?(sx==='F'?'meninas':'meninos'):'mediana';
+  });
 
-  const pts=A.filter(o=>o[opts.campo]!==null&&o.s===opts.sexo&&o.a>=10&&o.a<=19
-    &&opts.cats.has(o.c)&&(opts.turma==='__all'||o.t===opts.turma));
+  const esq=opts.esquema||ESQ_IMC;
+  const pts=A.filter(o=>o[opts.campo]!==null&&(opts.sexo==='A'||o.s===opts.sexo)&&o.a>=10&&o.a<=19
+    &&esq.cat(o)&&opts.cats.has(esq.cat(o))&&(opts.turma==='__all'||o.t===opts.turma));
   pts.forEach(o=>{
-    const v=Math.min(Math.max(o[opts.campo],cfg.y0+.4),cfg.y1-.4);
+    const k=esq.cat(o), v=Math.min(Math.max(o[opts.campo],cfg.y0+.4),cfg.y1-.4);
     const c=el('circle',{cx:px(o.m).toFixed(1),cy:py(v).toFixed(1),r:4.6,
-      fill:CAT[o.c].c,'fill-opacity':.8,class:'dot',tabindex:0,role:'img',
-      'aria-label':`${nome(o)}, ${br(o[opts.campo])}${cfg.un}, ${CAT[o.c].n}`});
+      fill:esq.dic[k].c,'fill-opacity':.8,class:'dot',tabindex:0,role:'img',
+      'aria-label':`${nome(o)}, ${br(o[opts.campo])}${cfg.un}, ${esq.dic[k].n}`});
     bindTip(c,`<b>${nome(o)}</b><span class="m">${o.t} · ${o.a} anos<br>
-      ${br(o.p)} kg · ${o.h} cm · IMC ${br(o.i)}</span>
-      <span style="color:${CAT[o.c].c}">${CAT[o.c].n}</span>`);
+      ${br(o.p)} kg · ${o.h} cm · IMC ${br(o.i)}${o.ze!==null?`<br>estatura: escore-z ${br(o.ze)}`:''}</span>
+      <span style="color:${esq.dic[k].c}">${esq.dic[k].n}</span>`);
     svg.appendChild(c);
   });
   return {svg,n:pts.length};
 }
 
+/* ============ IMC por idade na EJA ============ */
+function graficoEJA(pts){
+  const W=920,H=560,ml=52,mr=66,mt=18,mb=44;
+  const x0=14,x1=66,y0=14,y1=44;
+  const px=v=>ml+(v-x0)/(x1-x0)*(W-ml-mr);
+  const py=v=>mt+(1-(v-y0)/(y1-y0))*(H-mt-mb);
+  const svg=el('svg',{viewBox:`0 0 ${W} ${H}`,role:'img',
+    'aria-label':'IMC por idade dos alunos da EJA, com os pontos de corte de adulto'});
+  for(let v=15;v<=y1;v+=5){
+    svg.appendChild(el('line',{x1:ml,x2:W-mr,y1:py(v),y2:py(v),class:'gridline'}));
+    svg.appendChild(el('text',{x:ml-9,y:py(v)+4,class:'axis','text-anchor':'end'})).textContent=v;
+  }
+  for(let v=15;v<=65;v+=5)
+    svg.appendChild(el('text',{x:px(v),y:H-mb+20,class:'axis','text-anchor':'middle'})).textContent=v;
+  svg.appendChild(el('text',{x:(W+ml)/2,y:H-6,class:'axis','text-anchor':'middle'})).textContent='idade (anos)';
+  svg.appendChild(el('text',{x:ml-9,y:mt-4,class:'axis','text-anchor':'end'})).textContent='IMC';
+
+  /* fronteira entre os dois critérios */
+  svg.appendChild(el('line',{x1:px(19.5),x2:px(19.5),y1:mt,y2:H-mb,
+    stroke:'var(--ink)','stroke-opacity':.25,'stroke-width':1,'stroke-dasharray':'3 5'}));
+  svg.appendChild(el('text',{x:px(19.5)-6,y:mt+12,class:'axis','text-anchor':'end'})).textContent='OMS';
+  svg.appendChild(el('text',{x:px(19.5)+6,y:mt+12,class:'axis'})).textContent='corte de adulto';
+
+  [[18.5,'var(--magreza)','18,5 magreza'],[25,'var(--sobrepeso)','25 sobrepeso'],
+   [30,'var(--obesidade)','30 obesidade'],[35,'var(--grave)','35 grave']].forEach(([v,cor,rot])=>{
+    svg.appendChild(el('line',{x1:px(19.5),x2:W-mr,y1:py(v),y2:py(v),stroke:cor,
+      'stroke-width':1.4,'stroke-opacity':.55,'stroke-dasharray':'5 4'}));
+    svg.appendChild(el('text',{x:W-mr+5,y:py(v)+4,class:'axis',fill:cor})).textContent=rot;
+  });
+
+  pts.forEach(a=>{
+    const c=el('circle',{cx:px(a.m/12).toFixed(1),cy:py(Math.min(Math.max(a.i,y0+.4),y1-.4)).toFixed(1),
+      r:5,fill:CAT[a.c].c,'fill-opacity':.8,class:'dot',tabindex:0,role:'img',
+      'aria-label':`${nome(a)}, ${a.a} anos, IMC ${br(a.i)}, ${CAT[a.c].n}`});
+    bindTip(c,`<b>${nome(a)}</b><span class="m">${a.t} · ${a.a} anos<br>
+      ${br(a.p)} kg · ${a.h} cm · IMC ${br(a.i)}</span>
+      <span style="color:${CAT[a.c].c}">${CAT[a.c].n}</span>`);
+    svg.appendChild(c);
+  });
+  return svg;
+}
+
 /* ============ controles de filtro ============ */
-function controles(estado,redraw){
+function controles(estado,redraw,esq){
+  esq = esq || ESQ_IMC;
   const wrap=document.createElement('div');
   wrap.style.cssText='display:flex;flex-direction:column;gap:9px;align-items:flex-start';
   const seg=document.createElement('div'); seg.className='legend';
-  [['F','Meninas'],['M','Meninos']].forEach(([v,rot])=>{
+  const SEXOS=[['F','Meninas'],['M','Meninos'],['A','Ambos']];
+  SEXOS.forEach(([v,rot])=>{
     const b=document.createElement('button'); b.className='tab'; b.textContent=rot;
     b.onclick=()=>{estado.sexo=v;redraw();};
     seg.appendChild(b);
@@ -316,10 +388,12 @@ function controles(estado,redraw){
   sel.value=estado.turma;
   sel.onchange=()=>{estado.turma=sel.value;redraw();};
   const leg=document.createElement('div'); leg.className='legend';
-  ORD.forEach(k=>{
+  esq.ord.forEach(k=>{
     const b=document.createElement('button'); b.className='tab';
-    b.innerHTML=`<span class="sw" style="background:${CAT[k].c}"></span>${CAT[k].n}`;
-    b.setAttribute('aria-pressed','true');
+    b.innerHTML=`<span class="sw" style="background:${esq.dic[k].c}"></span>${esq.dic[k].n}`;
+    const ativo=estado.cats.has(k);
+    b.setAttribute('aria-pressed',ativo);
+    if(!ativo) b.classList.add('off');
     b.onclick=()=>{
       if(estado.cats.has(k)&&estado.cats.size>1){estado.cats.delete(k);b.classList.add('off');b.setAttribute('aria-pressed','false');}
       else{estado.cats.add(k);b.classList.remove('off');b.setAttribute('aria-pressed','true');}
@@ -329,17 +403,20 @@ function controles(estado,redraw){
   });
   const info=document.createElement('p'); info.className='hint';
   wrap.append(seg,lab,sel,leg);
-  const sinc=()=>[...seg.children].forEach((b,i)=>b.setAttribute('aria-pressed',estado.sexo===(i?'M':'F')));
+  const sinc=()=>[...seg.children].forEach((b,i)=>
+    b.setAttribute('aria-pressed', SEXOS[i][0]===estado.sexo));
   return {wrap,info,sinc};
 }
 
 /* ============ painel genérico de dispersão ============ */
 function painelDispersao(cfg){
   const d=document.createElement('div'); d.className='split wide';
-  const estado={sexo:'F',cats:new Set(ORD),turma:'__all',campo:cfg.campo};
+  const esq=cfg.esquema||ESQ_IMC;
+  const estado=estadoDe('disp-'+cfg.campo,esq.ord);
+  estado.campo=cfg.campo; estado.esquema=esq;
   const left=document.createElement('div'); left.className='pane';
   left.innerHTML=`<p class="eyebrow">Explorar</p><h2>${cfg.h2}</h2><p class="lead">${cfg.lead}</p>`;
-  const ctrl=controles(estado,()=>redraw());
+  const ctrl=controles(estado,()=>redraw(),esq);
   left.append(ctrl.wrap,ctrl.info);
   const right=document.createElement('div'); right.className='pane';
   const card=document.createElement('div'); card.className='card';
@@ -348,7 +425,9 @@ function painelDispersao(cfg){
     ctrl.sinc();
     const g=dispersao(estado);
     card.innerHTML=''; card.appendChild(g.svg);
-    ctrl.info.textContent=`${g.n} aluno${g.n===1?'':'s'} no gráfico. ${foraFaixa} alunos da EJA com mais de 19 anos ficam fora do recorte.`;
+    ctrl.info.textContent = g.n
+      ? `${g.n} aluno${g.n===1?'':'s'} no gráfico. ${cfg.rodape||`${foraFaixa} alunos da EJA com mais de 19 anos ficam fora do recorte e têm slide próprio.`}`
+      : 'Nenhum aluno medido de 10 a 19 anos com os filtros atuais.';
   }
   redraw();
   d.append(left,right);
@@ -386,11 +465,13 @@ S('Abertura',()=>{
   [['Cobertura','Quanto da escola já foi medida e quem ainda falta.'],
    ['Resultado','A distribuição das classificações da OMS entre os alunos medidos.'],
    ['Idade × peso','Cada aluno diante da mediana de peso da própria escola.'],
-   ['Idade × altura','O mesmo recorte para a estatura.'],
    ['Curva da OMS','O gráfico oficial de IMC por idade, aluno por aluno.'],
    ['Turmas','Onde o excesso de peso se concentra.'],
    ['Consistência','Duas turmas com peso médio fora do padrão das paralelas.'],
+   ['Idade × altura','O mesmo recorte para a estatura.'],
    ['Estatura','Os casos de baixa estatura para a idade.'],
+   ['EJA adulta','Os alunos acima de 19 anos, que a curva da OMS não alcança.'],
+   ['EJA no gráfico','O noturno inteiro, dos 15 aos 63 anos, contra os cortes de adulto.'],
    ['Plano','O que fica combinado com a escola.']
   ].forEach(([t,dd])=>{
     const b=document.createElement('div');
@@ -446,7 +527,8 @@ S('Resultado',()=>{
   const c=document.createElement('div'); c.className='card';
 
   const W=880,H=110,ml=0;
-  const svg=el('svg',{viewBox:`0 0 ${W} ${H}`});
+  const svg=el('svg',{viewBox:`0 0 ${W} ${H}`,role:'img',
+    'aria-label':'Distribuição dos alunos medidos entre as classificações da OMS'});
   let x=0;
   ORD.forEach(k=>{
     const w=cont[k]/validos.length*W;
@@ -485,19 +567,10 @@ S('Idade × peso',()=>painelDispersao({
   slides anteriores. Filtre por turma para levar o recorte ao conselho de classe.`
 }));
 
-/* 5 — idade x altura */
-S('Idade × altura',()=>painelDispersao({
-  campo:'h',
-  h2:'Altura por idade',
-  lead:`A estatura acompanha a idade de forma mais previsível que o peso, e é isso que
-  torna os pontos bem abaixo da mediana dignos de atenção. As cores continuam sendo a
-  classificação de IMC, para dar de ver quem está baixo e pesado ao mesmo tempo.`
-}));
-
-/* 6 — curva interativa */
+/* 5 — curva interativa */
 S('Curva OMS',()=>{
   const d=document.createElement('div'); d.className='split wide';
-  const estado={sexo:'F',cats:new Set(ORD),turma:'__all'};
+  const estado=estadoDe('oms');
   const left=document.createElement('div'); left.className='pane';
   left.innerHTML=`<p class="eyebrow">Explorar</p>
     <h2>Cada aluno na curva da OMS</h2>
@@ -512,14 +585,16 @@ S('Curva OMS',()=>{
     ctrl.sinc();
     const g=curvaOMS(estado);
     card.innerHTML=''; card.appendChild(g.svg);
-    ctrl.info.textContent=`${g.n} aluno${g.n===1?'':'s'} no gráfico.`;
+    ctrl.info.textContent = g.n
+      ? `${g.n} aluno${g.n===1?'':'s'} no gráfico.`
+      : 'Nenhum aluno com escore-z da OMS nesta seleção.';
   }
   redraw();
   d.append(left,right);
   return d;
 });
 
-/* 7 — turmas */
+/* 6 — turmas */
 S('Turmas',()=>{
   const d=document.createElement('div'); d.className='split';
   const turmas={};
@@ -546,7 +621,7 @@ S('Turmas',()=>{
   return d;
 });
 
-/* 8 — alerta de balança */
+/* 7 — alerta de balança */
 S('Consistência',()=>{
   const d=document.createElement('div'); d.className='split';
   const alvo=['7ºIM01-EF','7ºIM02-EF','7ºIM03-EF','8ºIM01-EF','8ºIM02-EF','8ºIM03-EF'];
@@ -561,7 +636,7 @@ S('Consistência',()=>{
     <p class="eyebrow">Antes de fechar o relatório</p>
     <h2>Duas turmas destoam das paralelas</h2>
     <p class="lead">A 7ºIM02 tem peso médio 12,5 kg acima das outras duas sétimas séries,
-    com a mesma idade. A 8ºIM03 está 13 kg acima das outras oitavas.
+    com a mesma idade. A 8ºIM03 está 13,9 kg acima das outras oitavas.
     Diferença dessa ordem entre turmas do mesmo ano não costuma ser real.</p>
     <p class="lead"><b>O que fazer:</b> confirmar se a balança e o estadiômetro usados
     nessas duas turmas foram os mesmos das demais. Se houver descalibração,
@@ -573,6 +648,17 @@ S('Consistência',()=>{
   p.appendChild(c); d.appendChild(p);
   return d;
 });
+
+/* 8 — idade x altura */
+S('Idade × altura',()=>painelDispersao({
+  campo:'h',
+  esquema:ESQ_EST,
+  h2:'Altura por idade',
+  lead:`A estatura acompanha a idade de forma mais previsível que o peso, e é isso que
+  torna os pontos bem abaixo da mediana dignos de atenção. Aqui a cor é a estatura para
+  a idade: abaixo de −2 escores-z é baixa estatura, abaixo de −3 é muito baixa.`,
+  rodape:`${foraFaixa} alunos da EJA com mais de 19 anos e 3 de 19 anos sem escore-z de estatura ficam fora do recorte.`
+}));
 
 /* 9 — estatura */
 S('Estatura',()=>{
@@ -600,25 +686,92 @@ S('Estatura',()=>{
   return d;
 });
 
-/* 10 — plano */
+/* 10 — adultos da EJA */
+S('EJA adulta',()=>{
+  const d=document.createElement('div'); d.className='split';
+  const ad=A.filter(a=>a.p!==null&&a.a>19).sort((x,y)=>y.i-x.i);
+  const exc19=ad.filter(a=>['sobrepeso','obesidade','grave'].includes(a.c));
+  d.innerHTML=`<div class="pane">
+    <p class="eyebrow">Fora da curva da OMS</p>
+    <h2>Os ${ad.length} adultos da EJA</h2>
+    <p class="lead">A referência de IMC por idade da OMS termina aos 19 anos. Acima disso
+    estes alunos foram classificados pelos pontos de corte de adulto — 25 para sobrepeso,
+    30 para obesidade e 35 para obesidade grave —, e é por isso que não aparecem nos
+    gráficos por idade. Estão contados em todo o resto do diagnóstico.</p>
+    <p class="lead">São ${ad.length} pessoas de ${Math.min(...ad.map(a=>a.a))} a ${Math.max(...ad.map(a=>a.a))} anos,
+    todas do noturno. Proporcionalmente é o grupo mais afetado da escola, e o que menos
+    se enquadra em ação feita na aula de Educação Física.</p>
+    <div class="kpis">
+      <div class="kpi"><div class="v">${ad.length}</div><div class="l">medidos</div></div>
+      <div class="kpi"><div class="v" style="color:var(--sobrepeso)">${pct(exc19.length,ad.length)}</div>
+        <div class="l">com excesso de peso</div></div>
+      <div class="kpi"><div class="v" style="color:var(--grave)">${ad.filter(a=>a.c==='grave').length}</div>
+        <div class="l">obesidade grave</div></div>
+    </div></div>`;
+  const p=document.createElement('div'); p.className='pane';
+  const c=document.createElement('div'); c.className='card scroll';
+  const t=document.createElement('table');
+  t.innerHTML='<tr><th>Aluno</th><th>Turma</th><th>Idade</th><th>IMC</th><th>Classificação</th></tr>'+
+    ad.map(a=>`<tr><td>${nome(a)}</td><td style="color:var(--muted)">${a.t}</td>
+      <td>${a.a}</td><td>${br(a.i)}</td>
+      <td style="color:${CAT[a.c].c}">${CAT[a.c].n}</td></tr>`).join('');
+  c.appendChild(t); p.appendChild(c); d.appendChild(p);
+  return d;
+});
+
+/* 11 — gráfico da EJA */
+S('EJA no gráfico',()=>{
+  const d=document.createElement('div'); d.className='split wide';
+  const eja=A.filter(a=>a.t.includes('EJA'));
+  const med=eja.filter(a=>a.p!==null).sort((x,y)=>x.m-y.m);
+  const exc=med.filter(a=>['sobrepeso','obesidade','grave'].includes(a.c));
+  const left=document.createElement('div'); left.className='pane';
+  left.innerHTML=`<p class="eyebrow">Noturno</p>
+    <h2>A EJA inteira em um gráfico</h2>
+    <p class="lead">Cada ponto é um aluno da EJA, dos 15 aos ${Math.max(...med.map(a=>a.a))} anos.
+    A linha pontilhada aos 19 anos marca onde muda o critério: à esquerda vale a curva da OMS,
+    à direita os cortes de adulto, desenhados na borda do gráfico.</p>
+    <p class="lead">É a parte da escola com a pior cobertura e a maior proporção de excesso de
+    peso — mas com ${med.length} medidos de ${eja.length} o percentual ainda é provisório.</p>
+    <div class="kpis">
+      <div class="kpi"><div class="v">${med.length}<span style="font-size:1.2rem;color:var(--muted)">/${eja.length}</span></div>
+        <div class="l">medidos na EJA</div></div>
+      <div class="kpi"><div class="v" style="color:var(--sobrepeso)">${pct(exc.length,med.length)}</div>
+        <div class="l">com excesso de peso</div></div>
+      <div class="kpi"><div class="v" style="color:var(--pendente)">${eja.length-med.length}</div>
+        <div class="l">ainda por medir</div></div>
+    </div>`;
+  const right=document.createElement('div'); right.className='pane';
+  const card=document.createElement('div'); card.className='card';
+  card.appendChild(graficoEJA(med));
+  right.appendChild(card);
+  d.append(left,right);
+  return d;
+});
+
+/* 12 — plano */
 S('Plano',()=>{
   const d=document.createElement('div'); d.className='split';
   d.innerHTML=`<div class="pane">
     <p class="eyebrow">Próximos passos</p>
     <h2>O que fica para a escola</h2>
     <p class="lead">Marque conforme for concluindo. Os dois primeiros itens
-    fecham a coleta; os três últimos são o trabalho de fato.</p></div>`;
+    fecham a coleta; os outros dois são o trabalho de fato.</p></div>`;
   const p=document.createElement('div'); p.className='pane';
   const c=document.createElement('div'); c.className='card scroll';
   [['Medir os 103 alunos que faltam','Prioridade para 6ºIM03 e as três turmas de EJA-EP-ADC, que somam 42 alunos.'],
-   ['Cadastrar Jhuly e Matheus Vitor','Duas linhas soltas no fim da planilha oficial, sem turma nem cadastro. Entram pela aba “Inserir novos alunos”, com id, turma e data de nascimento.'],
    ['Checar a balança da 7ºIM02 e da 8ºIM03','Antes de tratar essas turmas como prioridade de intervenção.'],
    [`Encaminhar os casos individuais`,`${validos.filter(a=>a.c==='grave').length} alunos com obesidade grave e ${baixaEst.length} com baixa estatura, com a família avisada.`],
    [`Levar o resultado ao conselho de classe`,`${excesso.length} alunos com excesso de peso é pauta de escola inteira, não só da Educação Física.`]
-  ].forEach(([t,dd])=>{
-    const b=document.createElement('button'); b.className='chk'; b.setAttribute('aria-pressed','false');
+  ].forEach(([t,dd],idx)=>{
+    const b=document.createElement('button'); b.className='chk';
+    b.setAttribute('aria-pressed', feitos.has(idx));
     b.innerHTML=`<span class="box">✓</span><span><span class="t">${t}</span><span class="d" style="display:block">${dd}</span></span>`;
-    b.onclick=()=>b.setAttribute('aria-pressed', b.getAttribute('aria-pressed')==='true'?'false':'true');
+    b.onclick=()=>{
+      const novo = b.getAttribute('aria-pressed')!=='true';
+      novo?feitos.add(idx):feitos.delete(idx);
+      b.setAttribute('aria-pressed',novo);
+    };
     c.appendChild(b);
   });
   p.appendChild(c); d.appendChild(p);
@@ -647,6 +800,8 @@ function ir(i){
 document.getElementById('prev').onclick=()=>ir(atual-1);
 document.getElementById('next').onclick=()=>ir(atual+1);
 addEventListener('keydown',e=>{
+  const alvo=e.target;
+  if(alvo&&(/^(SELECT|INPUT|TEXTAREA)$/.test(alvo.tagName)||alvo.isContentEditable)) return;
   if(e.key==='ArrowRight'||e.key==='PageDown'){ir(atual+1);}
   else if(e.key==='ArrowLeft'||e.key==='PageUp'){ir(atual-1);}
   else if(e.key==='Home'){ir(0);} else if(e.key==='End'){ir(slides.length-1);}
@@ -656,7 +811,12 @@ btnAnon.onclick=()=>{
   anon=!anon; btnAnon.setAttribute('aria-pressed',anon);
   btnAnon.textContent=anon?'Mostrar nomes':'Ocultar nomes'; ir(atual);
 };
-ir(0);
+function ajustarBarra(){
+  document.documentElement.style.setProperty('--barra',
+    (document.getElementById('bar').offsetHeight+16)+'px');
+}
+addEventListener('resize',ajustarBarra);
+ajustarBarra(); ir(0); ajustarBarra();
 </script>
 </body>
 </html>
