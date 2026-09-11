@@ -70,8 +70,20 @@ b{font-weight:600;color:var(--ink)}
 svg{display:block;width:100%;height:auto;overflow:visible}
 .axis{fill:var(--muted);font-size:11px;font-family:var(--sans)}
 .gridline{stroke:var(--line)}
-.dot{cursor:pointer}
+.dot{cursor:pointer;transform-box:fill-box;transform-origin:center;
+  transition:opacity .44s ease-out, transform .44s cubic-bezier(.18,.9,.28,1)}
+.dot.fora{opacity:0;transform:scale(3.6)}
 .dot:hover{stroke:var(--ink);stroke-width:1.6}
+.seg{transform-box:fill-box;transform-origin:left center;
+  transition:transform .75s cubic-bezier(.2,.85,.3,1)}
+.seg.fora{transform:scaleX(0)}
+.seg-rot{transition:opacity .4s ease-out .35s}
+.seg-rot.fora{opacity:0}
+.barra-fill{transition:width .8s cubic-bezier(.2,.85,.3,1)}
+@media (prefers-reduced-motion:reduce){
+  .dot,.seg,.seg-rot,.barra-fill{transition:none}
+  .dot.fora,.seg.fora,.seg-rot.fora{opacity:1;transform:none}
+}
 
 /* ---------- legenda / listas ---------- */
 .legend{display:flex;flex-wrap:wrap;gap:6px}
@@ -260,6 +272,8 @@ function barras(itens,{max,cor,rotulo}={}){
     const track=document.createElement('div');
     track.style.cssText='height:16px;background:rgba(233,241,237,.06);border-radius:4px;overflow:hidden';
     const fill=document.createElement('div');
+    fill.className='barra-fill';
+    fill.dataset.w=`${(100*it.v/mx).toFixed(1)}%`;
     fill.style.cssText=`height:100%;width:${(100*it.v/mx).toFixed(1)}%;background:${it.cor||cor||'var(--eutrofia)'};border-radius:4px`;
     track.appendChild(fill);
     const v=document.createElement('span');
@@ -421,18 +435,57 @@ function painelDispersao(cfg){
   const right=document.createElement('div'); right.className='pane';
   const card=document.createElement('div'); card.className='card';
   right.appendChild(card);
-  function redraw(){
-    ctrl.sinc();
+  function pintar(){
     const g=dispersao(estado);
     card.innerHTML=''; card.appendChild(g.svg);
+    entrarPontos(g.svg);
     ctrl.info.textContent = g.n
       ? `${g.n} aluno${g.n===1?'':'s'} no gráfico. ${cfg.rodape||`${foraFaixa} alunos da EJA com mais de 19 anos ficam fora do recorte e têm slide próprio.`}`
       : 'Nenhum aluno medido de 10 a 19 anos com os filtros atuais.';
   }
-  redraw();
+  function redraw(){ ctrl.sinc(); sairPontos(card,pintar); }
+  ctrl.sinc(); pintar();
   d.append(left,right);
   return d;
 }
+
+/* ============ animação de entrada e saída ============ */
+const SEM_MOV = matchMedia('(prefers-reduced-motion:reduce)').matches;
+const ESCALONA = 340;   /* atraso total distribuído entre os pontos */
+function atrasoDe(i,n,inverso){
+  if(n<2) return 0;
+  const f = inverso ? (n-1-i)/(n-1) : i/(n-1);
+  return f*Math.min(ESCALONA, n*2.2);
+}
+function entrarPontos(raiz){
+  const cs=[...raiz.querySelectorAll('.dot')];
+  cs.forEach((c,i)=>{c.classList.add('fora');c.style.transitionDelay=atrasoDe(i,cs.length)+'ms';});
+  requestAnimationFrame(()=>requestAnimationFrame(()=>
+    cs.forEach(c=>c.classList.remove('fora'))));
+}
+function sairPontos(raiz,fim){
+  const cs=[...raiz.querySelectorAll('.dot:not(.fora)')];
+  if(SEM_MOV||!cs.length){fim();return;}
+  const espalha=Math.min(ESCALONA,cs.length*2.2)/2;
+  cs.forEach((c,i)=>{
+    c.style.transitionDuration='200ms';
+    c.style.transitionDelay=atrasoDe(i,cs.length,true)/2+'ms';
+    c.classList.add('fora');
+  });
+  setTimeout(fim,200+espalha+20);
+}
+function entrarBarras(raiz){
+  raiz.querySelectorAll('.barra-fill').forEach((f,i)=>{
+    const alvo=f.dataset.w;
+    f.style.transitionDelay=Math.min(i*45,400)+'ms';
+    f.style.width='0%';
+    requestAnimationFrame(()=>requestAnimationFrame(()=>f.style.width=alvo));
+  });
+  const segs=[...raiz.querySelectorAll('.seg,.seg-rot')];
+  segs.forEach(e=>e.classList.add('fora'));
+  requestAnimationFrame(()=>requestAnimationFrame(()=>segs.forEach(e=>e.classList.remove('fora'))));
+}
+function animarEntrada(raiz){entrarBarras(raiz);entrarPontos(raiz);}
 
 /* ============ slides ============ */
 const slides=[];
@@ -532,13 +585,14 @@ S('Resultado',()=>{
   let x=0;
   ORD.forEach(k=>{
     const w=cont[k]/validos.length*W;
-    const r=el('rect',{x:x.toFixed(1),y:14,width:Math.max(w-2,1).toFixed(1),height:58,rx:5,fill:CAT[k].c});
+    const r=el('rect',{x:x.toFixed(1),y:14,width:Math.max(w-2,1).toFixed(1),height:58,rx:5,
+      fill:CAT[k].c,class:'seg'});
     bindTip(r,`<b>${CAT[k].n}</b><span class="m">${cont[k]} alunos · ${pct(cont[k],validos.length)}</span>`);
     svg.appendChild(r);
     if(w>52){
       svg.appendChild(el('text',{x:(x+w/2).toFixed(1),y:48,'text-anchor':'middle',
-        fill:'#0B1F1B','font-size':17,'font-weight':600})).textContent=cont[k];
-      svg.appendChild(el('text',{x:(x+w/2).toFixed(1),y:92,'text-anchor':'middle',class:'axis'}))
+        fill:'#0B1F1B','font-size':17,'font-weight':600,class:'seg-rot'})).textContent=cont[k];
+      svg.appendChild(el('text',{x:(x+w/2).toFixed(1),y:92,'text-anchor':'middle',class:'axis seg-rot'}))
         .textContent=CAT[k].n;
     }
     x+=w;
@@ -581,15 +635,16 @@ S('Curva OMS',()=>{
   const right=document.createElement('div'); right.className='pane';
   const card=document.createElement('div'); card.className='card';
   right.appendChild(card);
-  function redraw(){
-    ctrl.sinc();
+  function pintar(){
     const g=curvaOMS(estado);
     card.innerHTML=''; card.appendChild(g.svg);
+    entrarPontos(g.svg);
     ctrl.info.textContent = g.n
       ? `${g.n} aluno${g.n===1?'':'s'} no gráfico.`
       : 'Nenhum aluno com escore-z da OMS nesta seleção.';
   }
-  redraw();
+  function redraw(){ ctrl.sinc(); sairPontos(card,pintar); }
+  ctrl.sinc(); pintar();
   d.append(left,right);
   return d;
 });
@@ -793,6 +848,7 @@ function ir(i){
   const sec=document.createElement('section');
   sec.className='slide'; sec.appendChild(slides[atual].build());
   deck.appendChild(sec);
+  animarEntrada(sec);
   [...dots.children].forEach((b,j)=>b.setAttribute('aria-current', j===atual));
   count.textContent=`${atual+1} / ${slides.length}`;
   document.title=slides[atual].nome+' — Diagnóstico Nutricional';
